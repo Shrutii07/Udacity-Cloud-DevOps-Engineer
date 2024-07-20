@@ -36,4 +36,4 @@ Services stack outputs the final website URL.
 
 ## Website link
 
-The project is available at: http://websit-webap-s7eqmkjwmjpe-778892019.us-east-1.elb.amazonaws.com/
+The project is available at: http://websit-WebAp-sOSJbesz5u16-1216062866.us-east-1.elb.amazonaws.com
