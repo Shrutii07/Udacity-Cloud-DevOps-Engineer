@@ -1,0 +1,58 @@
+# Create first the network stack 
+#  application will be running on port 3000. 
+# The EC2 instances must have their own security group attached, allowing access to port 3000 from 10.11.0.0/16.
+# The EC2 instances must use the t2.micro instance type, a 10 GiB EBS disk, and any available Ubuntu AMI.
+# The AutoScaling group should deploy the instances in the private subnets of the existing VPC.
+# The AutoScaling group size goes between 1 and 6 instances depending on the environment.
+# The desired capacity must be passed as a parameter. Make it default to 1. 
+
+Parameters:
+  ExerciseName:
+    Type: String
+    Description: Tag name for our resources
+    Default: udacity-lt-asg-exercise
+  AsgDesiredCapacity:
+    Type: String
+    Description: Desired capacity for the fleet of instances
+    Default: 1
+
+
+Resources:
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow http access to our hosts from the LB Security Group
+      VpcId:
+        Fn::ImportValue:
+          !Sub "${ExerciseName}-vpc-id"
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 3000
+        ToPort: 3000
+        CidrIp: 10.11.0.0/16
+
+  LaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties: 
+      LaunchTemplateData:
+        ImageId: ami-0557a15b87f6559cf
+        SecurityGroupIds:
+          - !Ref SecurityGroup
+        InstanceType: t2.micro
+        BlockDeviceMappings:
+        - DeviceName: "/dev/sdk"
+          Ebs:
+            VolumeSize: '10'
+
+  AutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      VPCZoneIdentifier:
+      - Fn::ImportValue: 
+          !Sub "${ExerciseName}-private-subnets"
+      LaunchTemplate:
+        LaunchTemplateId: !Ref LaunchTemplate
+        Version: !GetAtt LaunchTemplate.LatestVersionNumber
+      MinSize: '1'
+      DesiredCapacity: !Ref AsgDesiredCapacity
+      MaxSize: '6'

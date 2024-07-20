@@ -1,0 +1,14 @@
+[
+    {
+        "ParameterKey": "Environment",
+        "ParameterValue": "Udacity-DevOps-Project2-Network-Infrastructure"
+    },
+    {
+        "ParameterKey": "Project",
+        "ParameterValue": "Udagram"
+    },
+	{
+		"ParameterKey":"WebServerVolumeSize",
+		"ParameterValue":"10"
+	}
+]

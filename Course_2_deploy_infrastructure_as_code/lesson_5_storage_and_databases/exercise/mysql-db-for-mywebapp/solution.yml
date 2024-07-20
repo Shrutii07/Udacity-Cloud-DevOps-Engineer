@@ -1,0 +1,81 @@
+
+# Create the network stack using the starter template provided for this exercise.
+# The network stack exports VPC and subnet parameters. Import them in your solution template.
+# The database engine must be MySQL 8.0.32 or newer.
+# Use a db.t3.micro instance class.
+# Allocate 20 GiB to the instance.
+# Protect your database against accidental data loss.
+# Place your database in the private subnets.
+# Pass your master username and password as parameters. The values must be specified only in a JSON parameters file.
+# The database security group should allow access on port 3306 for the CIDR block 10.10.0.0/24
+# The engine must be configured with the following parameters:
+# innodb_buffer_pool_instances: 1
+# innodb_buffer_pool_size: 134217728
+# max_connections: 1000
+
+Parameters:
+
+  ExerciseName:
+    Type: String
+    Description: Tag name for our resources
+    Default: udacity-rds-exercise
+  
+  RdsMasterUsername:
+    Type: String
+    Description: Username for the RDS database
+
+  RdsMasterPassword:
+    Type: String
+    Description: Password for the RDS database
+
+Resources:
+
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for MyWebAPP database
+      VpcId:
+        Fn::ImportValue:
+          !Sub "${ExerciseName}-vpc-id"
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 3306
+        ToPort: 3306
+        CidrIp: 10.10.0.0/24
+
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: DB subnet group for MyWebAPP database
+      SubnetIds: !Split
+      - ","
+      - Fn::ImportValue:
+          !Sub "${ExerciseName}-private-subnets"
+
+  DBParameterGroup:
+    Type: AWS::RDS::DBParameterGroup
+    Properties:
+      Description: Custom parameter group for MyWebAPP database
+      Family: mysql8.0
+      Parameters:
+        innodb_buffer_pool_instances: 1
+        innodb_buffer_pool_size: 134217728
+        max_connections: 1000
+
+  DBInstance:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Snapshot
+    Properties:
+      AllocatedStorage: '20'
+      DBName: mywebapp
+      DBInstanceClass: db.t3.micro
+      DBInstanceIdentifier: mywebapp-rds-instance
+      Engine: mysql
+      EngineVersion: "8.0.32"
+      VPCSecurityGroups:
+        - !Ref SecurityGroup
+      DeletionProtection: true
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      DBParameterGroupName: !Ref DBParameterGroup
+      MasterUsername: !Ref RdsMasterUsername
+      MasterUserPassword: !Ref RdsMasterPassword

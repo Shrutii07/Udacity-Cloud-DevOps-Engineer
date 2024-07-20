@@ -1,0 +1,229 @@
+Description: CD12352 - Infrastructure as Code Project - Udagram
+  Create a Launch Configuration in order to deploy four servers, two located in each of
+  your private subnets. The launch configuration will be used by an auto-scaling group.
+  Your CPU and RAM requirements will be covered with t2.micro instances, so use this instance type. 
+  The Operating System to be used is Ubuntu 22.
+  The application must be exposed to the internet using an Application Load Balancer.
+
+
+Parameters:
+  Environment:
+    Description: Environment name, used as a prefix for resources
+    Type: String
+
+  Project:
+    Description: Project name, used for resources tagging
+    Type: String
+
+  WebServerImageId:
+    Description: Web serve image id
+    Type: String
+    Default: ami-0a0e5d9c7acc336f1 # Ubuntu Server 22.04 LTS
+
+  WebServerVolumeSize:
+    Description: Web server disk volume size
+    Type: String
+
+
+Resources:
+
+## S3 
+# Web server Role
+  S3ReadOnlyEC2:
+    Type: AWS::IAM::Role
+    Properties:
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Effect: "Allow"
+            Principal:
+              Service:
+                - "ec2.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      Path: "/"
+
+  RootInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: "/"
+      Roles:
+        - !Ref S3ReadOnlyEC2
+  
+
+### Security Groups
+#  The load balancer should allow all public traffic (0.0.0.0/0) on port 80 inbound, which is the default HTTP port.
+  LoadBalancerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Load Balancer HTTP traffic
+      GroupName: Load-balancer-security-group
+      VpcId: 
+        Fn::ImportValue:
+          !Sub "${Project}-VPCID"
+      SecurityGroupIngress:
+      - IpProtocol: TCP
+        FromPort: 80
+        ToPort: 80
+        CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+      - IpProtocol: TCP
+        FromPort: 80
+        ToPort: 80
+        CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Project
+          Value: !Sub ${Project} Load Balancer Security Group
+  
+
+  # Application security group (EC2 Instance)
+  ApplicationSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Application Security Group
+      GroupName: Application-security-group
+      VpcId: 
+        Fn::ImportValue:
+          !Sub "${Project}-VPCID"
+      SecurityGroupIngress:
+      - Description: Inbound rule to allow the Load Balancer.
+        IpProtocol: TCP
+        SourceSecurityGroupId: !Ref LoadBalancerSecurityGroup
+        FromPort: 80
+        ToPort: 80
+      Tags:
+        - Key: Project
+          Value: !Sub ${Project} Web Servers Security Group
+
+
+### LaunchTemplate  
+  WebAppLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties: 
+      LaunchTemplateName: !Sub "${Project}-web-servers"
+      LaunchTemplateData:
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            apt-get update -y
+            apt-get install unzip awscli -y
+            apt-get install apache2 -y
+            systemctl start apache2.service
+            cd /var/www/html
+            aws s3 cp s3://udacity-demo-1/udacity.zip .
+            unzip -o udacity.zip
+        ImageId: !Ref WebServerImageId
+        IamInstanceProfile:
+          Name: !Ref RootInstanceProfile
+        SecurityGroupIds:
+          - !Ref ApplicationSecurityGroup
+        InstanceType: t2.micro
+        BlockDeviceMappings:
+        - DeviceName: "/dev/sdk"
+          Ebs:
+            VolumeSize: !Ref WebServerVolumeSize
+
+## Auto Scaling
+  WebAppServerGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      VPCZoneIdentifier:
+        - Fn::ImportValue: !Sub "${Project}-Private-Subnet-IDs"
+      LaunchTemplate:
+        LaunchTemplateId: !Ref WebAppLaunchTemplate
+        Version: !GetAtt WebAppLaunchTemplate.LatestVersionNumber
+      MinSize: '2'
+      MaxSize: '4'
+      TargetGroupARNs:
+      - Ref: WebAppTargetGroup
+      Tags:
+      - Key: Name
+        Value: !Sub ${Project} Web Servers Security Group
+        PropagateAtLaunch: true
+
+
+# LOAD BALANCER
+  WebAppLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Subnets:
+      - Fn::ImportValue: !Sub ${Project}-Public-Subnet-1-ID
+      - Fn::ImportValue: !Sub ${Project}-Public-Subnet-2-ID
+      SecurityGroups: [ !Ref LoadBalancerSecurityGroup ]
+      Tags:
+        - Key: Name
+          Value: Load Balancer
+        - Key: Project
+          Value: !Ref Project
+
+  LoadBalancerListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+      - Type: forward
+        TargetGroupArn: !Ref WebAppTargetGroup
+      LoadBalancerArn: !Ref WebAppLoadBalancer
+      Port: '80'
+      Protocol: HTTP
+
+  LoadBalancerListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      Actions:
+      - Type: forward
+        TargetGroupArn: !Ref WebAppTargetGroup
+      Conditions:
+      - Field: path-pattern
+        Values: [/]
+      ListenerArn: !Ref LoadBalancerListener
+      Priority: 1
+
+  WebAppTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckIntervalSeconds: 10
+      HealthCheckPath: / 
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 8
+      HealthyThresholdCount: 2
+      Port: 80
+      Protocol: HTTP
+      UnhealthyThresholdCount: 5
+      VpcId:
+        Fn::ImportValue:
+          Fn::Sub: "${Project}-VPCID"
+
+## Cloud watch
+  EscalationTopic:
+    Type: AWS::SNS::Topic
+
+  EscalationTopicEmailSubscriber:
+    Type: AWS::SNS::Subscription
+    Properties:
+      Endpoint: shrutimurarka5@gmail.com
+      Protocol: email
+      TopicArn: !Ref EscalationTopic
+      
+  CloudFrontTotalErrorRateAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      Namespace: AWS/CloudFront
+      MetricName: TotalErrorRate
+      Dimensions:
+        - Name: DistributionId
+          Value: EI8CFI2XOB48T
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Threshold: 1
+      AlarmActions:
+        - !Ref EscalationTopic
+
+Outputs: 
+    WebAppLoadBalancerDnsName: 
+        Description: The URL of the web application load balancer
+        Value: !Sub "http://${WebAppLoadBalancer.DNSName}"
